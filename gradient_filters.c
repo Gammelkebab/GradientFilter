@@ -11,6 +11,17 @@
 #define BLOCKSIZE_X 4
 #define BLOCKSIZE_Y 4
 
+enum color
+{
+    RED,
+    GRN,
+    BLU
+};
+struct clr
+{
+	unsigned char R, G, B;
+};
+
 int width = 400;
 int height = 202;
 // the two gradients
@@ -21,14 +32,42 @@ int grad[2][3][3] = {{{-1, 0, 1},
                       {0, 0, 0},
                       {1, 2, 1}}};
 
-int applyFilter(unsigned char sqr[3][3], int mat[3][3])
+typedef char *Image;
+
+int getPixelIndex(int x, int y, int width)
+{
+    return x + y * width;
+}
+
+int getSubpixelIndex(int x, int y, int width, enum color color)
+{
+    return getPixelIndex(x, y, width) + color;
+}
+
+unsigned char applyFilter(unsigned char *buf, int x, int y, int width, int **grad, enum color color)
 {
     // you do not have to apply the filter on the first row/col and last row/col
     // since the filter needs left/right/top/bottom neighbours of a pixel
     // Iterate blockwise over the data
-    int tmp = 0 for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++)
-        tmp += sqr[i][j] * mat[i][j];
-    return tmp;
+    int sum = 0;
+    for (int i = -1; i <= 1; i++)
+    {
+        for (int j = -1; j <= 1; j++)
+        {
+            unsigned char subpixel_index = getSubpixelIndex(x + i, y + j, width, color);
+            sum += buf[subpixel_index] * grad[i + 1][j + 1];
+        }
+    }
+    return sum;
+}
+
+void bufIntoClr(unsigned char* arg, struct clr* arg2[width*height]){
+	for(int i = 0; i< width*height; i++)
+	{
+		(*arg2[i]).R = *(arg+i+0);
+		(*arg2[i]).G = *(arg+i+1);
+		(*arg2[i]).B = *(arg+i+2);
+	}
 }
 
 int main()
@@ -45,43 +84,44 @@ int main()
 
     // size is width*height*3 because of RGB values
     unsigned int pixels = width * height * 3;
-    unsigned char *buf = malloc(pixels * sizeof(unsigned char));
+    unsigned char* buf = malloc(pixels * sizeof(unsigned char));
 
-    unsigned float calls = sqrt(world_size * (((float)width - 2) / (height - 2)));
-    int rows = floor(calls);
-    int cols = floor(world_size / calls);
+//    float calls = sqrt(world_size * (((float)width - 2) / (height - 2)));
+//    int rows = floor(calls);
+//    int cols = floor(world_size / calls);
+
+    int block_width, block_height;
+    int block_x, block_y;
 
     // calculate workload for each process
     // read image with MPI_File_...
     MPI_File file;
     MPI_File_open(MPI_COMM_SELF, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, &file);
+
     // apply horizontal filter on input image
     // master writes header to image
     // write image with MPI_File_...
-    for (int i = 1; i < width - 1; i++)      //full image width
-        for (int j = 1; j < height - 1; j++) // full image height
+    int buffer_size = (width - 2) * 3;
+    unsigned char line_buffer[buffer_size];
+    for (int y = 1; y < height - 1; y++)
+    {
+        for (int x = 1; x < width - 1; x++)
         {
-            unsigned char tmp[3][3][3]; // 3x3 square
-            for (int k = -1; k < 2; k++)
-            { // width
-                for (int h = -1; h < 2; h++)
-                { // height
-                    for (int p = 0; p < 3; p++)
-                    { // RGB
-                        tmp[k + 1][h + 1][p] = buf[((j + h) * width + (i + k)) * 3 + p];
-                        applyFilter(tmp[red], grad[0]);
-                        applyFilter(tmp[green], grad[0]);
-                        applyFilter(tmp[blue], grad[0]);
-                    }
-                }
+            for (int color = RED; color <= BLU; color++)
+            {
+                line_buffer[(x - 1) * 3 + color] = applyFilter(buf, x, y, width, grad[0], (enum color) 	color);
             }
         }
+        int offset = block_x * block_width + (block_y * block_height + y) * width;
+//        MPI_File_write_at_all(file, offset, line_buffer, buffer_size, MPI_UNSIGNED_CHAR);
+    }
 
     // apply vertical filter on input image
     // master writes header to image
     // write image with MPI_File_...
     //    for( int i = 1; i < height - 1; i++) applyFilter(i);
     //	MPI_File_write(*file, buf, 100000, MPI_UNSIGNED_CHAR, NULL);
+
     MPI_File_close(&file);
     free(buf);
     MPI_Finalize();
